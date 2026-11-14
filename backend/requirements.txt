@@ -3,3 +3,5 @@ uvicorn>=0.30
 python-dotenv>=1.0
 pymysql>=1.1
 cryptography>=42      # pymysql が Azure の認証方式（caching_sha2_password）で使う
+pytest>=8             # テスト（backend/tests）
+httpx>=0.27           # テストで FastAPI の TestClient が使う

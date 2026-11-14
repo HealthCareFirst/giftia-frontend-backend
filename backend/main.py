@@ -10,9 +10,10 @@
 import os
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
+from chat import ChatRequest, build_stub_answer, is_chat_available
 from database import fetch_all
 
 load_dotenv()  # .env を読む（DB の接続情報・CORS の許可）
@@ -24,7 +25,8 @@ app = FastAPI(title="Giftia Search API（2週目）")
 # ブラウザは既定で「別オリジンへの通信」を止めるので、API 側が「この画面からは受け付ける」と宣言する。
 # 許可する画面の URL は .env の CORS_ORIGINS に書く（カンマ区切りで複数可）。空なら何も許可しない。
 origins = [o.strip() for o in os.environ.get("CORS_ORIGINS", "").split(",") if o.strip()]
-app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET"], allow_headers=["*"])
+# POST は FR-03 のチャット（/api/chat）で使う
+app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["GET", "POST"], allow_headers=["*"])
 
 
 @app.get("/api/health")
@@ -80,6 +82,22 @@ def search(
     )
     # ③ DB の行を、画面の Gift 型（1週目）に詰め替えて返す
     return {"total": total, "results": [to_gift(r) for r in rows]}
+
+
+@app.post("/api/chat")
+def chat(req: ChatRequest):
+    """FR-03：商品1件について1問ずつ答える（第1段階は固定の応答）"""
+    # ① 送別シーンが選ばれているかを API 側でも確かめる（画面の表示だけに頼らない）
+    if not is_chat_available(req.scene_tag):
+        raise HTTPException(status_code=400, detail="送別シーンが選ばれていないため、チャットは使えません")
+
+    # ② 商品 ID が実在するかをサーバーで照合する
+    rows = fetch_all("SELECT product_id, product_name FROM products WHERE product_id = %s", (req.product_id,))
+    if not rows:
+        raise HTTPException(status_code=404, detail="商品が見つかりません")
+
+    # ③ 回答を返す（第2段階でここを AI の回答に置き換える）
+    return build_stub_answer(rows[0])
 
 
 def to_gift(r: dict) -> dict:
