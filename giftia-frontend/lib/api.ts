@@ -61,3 +61,38 @@ export async function searchGifts(c: SearchCondition): Promise<Gift[]> {
     overBudget: c.priceBand === "3000" && g.price > 5000,
   }));
 }
+
+// ── FR-03 AI チャット ─────────────────────────────
+// 回答の出典。id と表示名はサーバーが組み立てる
+export type ChatSource = {
+  id: string;
+  label: string;
+};
+
+// POST /api/chat の応答
+export type ChatAnswer = {
+  answer: string;
+  sources: ChatSource[];
+  status: string;
+};
+
+// 商品1件について1問だけ質問する。signal で、閉じたときや商品を切り替えたときに通信を止める
+export async function askProduct(
+  productId: string,
+  question: string,
+  sceneTag: string,
+  signal?: AbortSignal,
+): Promise<ChatAnswer> {
+  const res = await fetch(`${API}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      product_id: productId,
+      question,
+      scene_tag: sceneTag,
+    }),
+    signal,
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return await res.json();
+}
