@@ -148,3 +148,216 @@ a.secondary {
   padding: 0.1em 0.4em;
   border-radius: 6px;
 }
+
+/* ── FR-03 AI チャット ───────────────────────────
+   色は globals.css の変数（--accent / --line / --sub / --ink）を使う */
+
+/* チャットを開いたとき：一覧を左、チャットを右 */
+.withChat {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: 16px;
+  align-items: start;
+}
+
+/* 結果カード */
+.cardSelected {
+  border: 2px solid var(--accent);
+}
+.selectedBadge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 4px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  vertical-align: 2px;
+}
+.askButton {
+  margin-top: 8px;
+  padding: 6px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--accent);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.askButton[aria-pressed="true"] {
+  background: #e8eef5;
+  border-color: #e8eef5;
+}
+
+/* チャットパネル */
+.chatPanel {
+  position: sticky;
+  top: 16px;
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100vh - 32px);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+}
+.chatHead {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.chatTitle {
+  flex: 1;
+  min-width: 0;
+}
+.chatTitle small {
+  display: block;
+  color: var(--sub);
+  font-size: 11px;
+}
+.chatTitle strong {
+  display: block;
+  font-size: 14px;
+  line-height: 1.4;
+}
+.chatClose {
+  width: 32px;
+  height: 32px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  cursor: pointer;
+}
+.chatBody {
+  flex: 1;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+}
+.bubble,
+.bubbleUser {
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.bubble {
+  background: #f4f6f9;
+}
+.bubble p {
+  margin: 0;
+}
+.bubbleUser {
+  align-self: flex-end;
+  max-width: 85%;
+  background: var(--accent);
+  color: #fff;
+}
+.sources {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--line);
+  color: var(--sub);
+  font-size: 12px;
+}
+.sources ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.chatLoading {
+  margin: 0;
+  color: var(--sub);
+  font-size: 12px;
+}
+.chatError {
+  padding: 12px;
+  border: 1px solid #f1c9ad;
+  border-radius: 10px;
+  background: #fdf1e8;
+  font-size: 13px;
+  line-height: 1.7;
+}
+.chatError strong {
+  color: #b4531a;
+}
+.chatError p {
+  margin: 4px 0 8px;
+}
+.chatError button {
+  padding: 6px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+}
+.chatFoot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 14px 14px;
+  border-top: 1px solid var(--line);
+}
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.chips button {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--ink);
+  font-size: 12px;
+  cursor: pointer;
+}
+.chatInput {
+  display: flex;
+  gap: 6px;
+  align-items: flex-end;
+}
+.chatInput textarea {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: inherit;
+  font-size: 13px;
+  resize: none;
+}
+.chatInput button {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+}
+.chatInput button:disabled,
+.chips button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* 狭い画面：チャットを全画面で表示する */
+@media (max-width: 768px) {
+  .withChat {
+    display: block;
+  }
+  .chatPanel {
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+  }
+}

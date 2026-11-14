@@ -6,9 +6,18 @@
 
 import { useState } from "react";
 import ResultCard from "./ResultCard";
+import ProductChat from "./ProductChat";
+import styles from "./page.module.css";
 import { searchGifts, type Gift } from "@/lib/api";
 
+// FR-03：チャットを使えるシーン（backend/chat.py の FAREWELL_SCENE とそろえる）
+const FAREWELL_SCENE = "送別";
+
 export default function Home() {
+  // TODO(FR-01): シーン選択（ゆきちさん担当）が入ったら、この仮の値を選択中のシーンの state に置き換える。
+  // あわせて、シーンを変えたときに setChatGift(null) を呼び、開いているチャットを閉じる（ガイドの FR-03）。
+  const scene: string = FAREWELL_SCENE;
+
   // ① 状態（変化するデータ）を覚える箱
   const [mode, setMode] = useState<"standard" | "business">("standard"); // どのタブか
   const [keyword, setKeyword] = useState(""); // 入力した言葉
@@ -19,11 +28,26 @@ export default function Home() {
   const [priceBand, setPriceBand] = useState(""); // 価格帯（取引先へのお礼）
   const [results, setResults] = useState<Gift[] | null>(null); // 検索結果
   const [error, setError] = useState(""); // つながらないときの文言
+  const [chatGift, setChatGift] = useState<Gift | null>(null); // チャットで質問中の商品（FR-03）
+  // チャットを使えるのは「いまの検索」タブで、送別シーンが選ばれているときだけ
+  const chatEnabled = mode === "standard" && scene === FAREWELL_SCENE;
+
+  // チャットを閉じて、元のカードの「この商品について聞く」にフォーカスを戻す
+  function closeChat() {
+    const id = chatGift?.id;
+    setChatGift(null);
+    if (id) {
+      requestAnimationFrame(() =>
+        document.getElementById(`ask-${id}`)?.focus(),
+      );
+    }
+  }
 
   // ② 検索ボタンの処理（API に聞くので、結果が返るまで待つ＝async/await）
   async function onSearch(e: React.FormEvent) {
     e.preventDefault(); // ページの再読み込みを止める
     setError("");
+    setChatGift(null); // 結果が入れ替わるので、開いているチャットは閉じる
     // いま開いているタブの条件だけを送る（もう一方のタブの入力は送らない）
     const condition =
       mode === "standard"
@@ -59,6 +83,7 @@ export default function Home() {
           onClick={() => {
             setMode("standard");
             setResults(null);
+            setChatGift(null);
           }}
         >
           いまの検索
@@ -68,6 +93,7 @@ export default function Home() {
           onClick={() => {
             setMode("business");
             setResults(null);
+            setChatGift(null);
           }}
         >
           取引先へのお礼
@@ -132,10 +158,29 @@ export default function Home() {
       {results && (
         <section>
           <p className="summary">上位 {results.length} 件</p>
-          <div className="grid">
-            {results.map((g, i) => (
-              <ResultCard key={g.id} gift={g} rank={i + 1} />
-            ))}
+          {/* チャットを開いたら、一覧を左・チャットを右に並べる（狭い画面ではチャットを全画面） */}
+          <div
+            className={chatEnabled && chatGift ? styles.withChat : undefined}
+          >
+            <div className="grid">
+              {results.map((g, i) => (
+                <ResultCard
+                  key={g.id}
+                  gift={g}
+                  rank={i + 1}
+                  onAsk={chatEnabled ? () => setChatGift(g) : undefined}
+                  selected={chatEnabled && chatGift?.id === g.id}
+                />
+              ))}
+            </div>
+            {chatEnabled && chatGift && (
+              <ProductChat
+                key={chatGift.id} // 商品が変わったら作り直す（質問欄・回答のリセット）
+                gift={chatGift}
+                sceneTag={scene}
+                onClose={closeChat}
+              />
+            )}
           </div>
         </section>
       )}
