@@ -14,9 +14,18 @@ import { searchGifts, type Gift } from "@/lib/api";
 const FAREWELL_SCENE = "送別";
 
 export default function Home() {
-  // TODO(FR-01): シーン選択（ゆきちさん担当）が入ったら、この仮の値を選択中のシーンの state に置き換える。
-  // あわせて、シーンを変えたときに setChatGift(null) を呼び、開いているチャットを閉じる（ガイドの FR-03）。
-  const scene: string = FAREWELL_SCENE;
+  const [scene, setScene] = useState<
+    | ""
+    | "誕生日"
+    | "送別"
+    | "お礼"
+    | "母の日"
+    | "お歳暮"
+    | "お中元"
+    | "結婚祝い"
+    | "父の日"
+    | "出産祝い"
+  >(""); // 選んだシーン
 
   // ① 状態（変化するデータ）を覚える箱
   const [mode, setMode] = useState<"standard" | "business">("standard"); // どのタブか
@@ -103,6 +112,25 @@ export default function Home() {
       <form className="form" onSubmit={onSearch}>
         {mode === "standard" ? (
           <>
+            <select
+              value={scene}
+              onChange={(e) => {
+                setScene(e.target.value as typeof scene);
+                setChatGift(null); // シーンを変えたら、開いているチャットを閉じる（FR-03）
+              }}
+            >
+              <option value="">シーンを選ぶ</option>
+              <option value="誕生日">誕生日</option>
+              <option value="送別">送別</option>
+              <option value="お礼">お礼</option>
+              <option value="母の日">母の日</option>
+              <option value="父の日">父の日</option>
+              <option value="お歳暮">お歳暮</option>
+              <option value="お中元">お中元</option>
+              <option value="結婚祝い">結婚祝い</option>
+              <option value="出産祝い">出産祝い</option>
+            </select>
+
             <input
               className="q"
               value={keyword}
