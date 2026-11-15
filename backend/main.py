@@ -80,8 +80,41 @@ def search(
             LIMIT %s""",
         (*params, limit),
     )
+    # --- ③ ここから下を「一括取得（バッチ処理）」に書き換える ---
+    results = []
+    if rows:
+        # 1. 取得した商品すべての product_id をリストにする
+        product_ids = [r["product_id"] for r in rows]
+
+        # 2. IN句を使って、該当する商品のレビューを「1回のSQL」でまとめて取得する
+        format_strings = ','.join(['%s'] * len(product_ids))
+        all_reviews = fetch_all(
+            f"""SELECT product_id, comment 
+                FROM reviews 
+                WHERE product_id IN ({format_strings}) 
+                  AND comment IS NOT NULL 
+                  AND comment != ''""",
+            tuple(product_ids)
+        )
+
+        # 3. 取得した全レビューを product_id ごとに辞書（マップ）に整理する
+        reviews_map = {}
+        for rev in all_reviews:
+            pid = rev["product_id"]
+            if pid not in reviews_map:
+                reviews_map[pid] = []
+            reviews_map[pid].append(rev["comment"])
+
+        # 4. 各商品データに、整理したレビューの配列を割り当てる（DBへの追加クエリは0回！）
+        for r in rows:
+            r["reviews"] = reviews_map.get(r["product_id"], [])
+            results.append(to_gift(r))
+
+    # ④ 画面の Gift 型に詰め替えたリストを返す
+    return {"total": total, "results": results}
+
     # ③ DB の行を、画面の Gift 型（1週目）に詰め替えて返す
-    return {"total": total, "results": [to_gift(r) for r in rows]}
+    #return {"total": total, "results": [to_gift(r) for r in rows]}
 
 
 @app.post("/api/chat")
@@ -110,4 +143,5 @@ def to_gift(r: dict) -> dict:
         "price": r["price"],
         "rating": float(r["rating"]) if r["rating"] is not None else 0,  # レビューなしは 0
         "reviewCount": r["review_count"],
+        "reviews": r.get("reviews", []),  # 【追加】レビューコメントの配列
     }

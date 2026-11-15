@@ -12,6 +12,7 @@ export type Gift = {
   price: number; // 価格（円）
   rating: number; // レビューの平均
   reviewCount: number; // レビュー件数
+  reviews?: string[]; // 【追加】レビューコメントの配列（文字列のリスト）
   overBudget?: boolean; // 予算（5,000円）を超えているか。画面側で付ける印（APIからは来ない）
 };
 
