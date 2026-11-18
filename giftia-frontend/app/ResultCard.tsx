@@ -21,7 +21,8 @@ export default function ResultCard({
   const [isOpen, setIsOpen] = useState(false);
 
   // レビュー件数が存在し、かつ 1件以上あるかどうかを判定する変数
-  const hasReviews = gift.reviewCount > 0 && gift.reviews && gift.reviews.length > 0;
+  const hasReviews =
+    gift.reviewCount > 0 && gift.reviews && gift.reviews.length > 0;
 
   return (
     <div className={selected ? `card ${styles.cardSelected}` : "card"}>
@@ -59,23 +60,36 @@ export default function ResultCard({
         >
           {selected ? "質問中" : "この商品について聞く"}
         </button>
+      )}
 
       {/* 【ポイント】hasReviews が true のとき（コメントがあるとき）だけ、下のトグルボタンを表示する */}
       {hasReviews && (
         <>
           <div
             onClick={() => setIsOpen(!isOpen)}
-            style={{ cursor: "pointer", color: "#0066cc", fontSize: "0.9rem", marginTop: "6px" }}
+            style={{
+              cursor: "pointer",
+              color: "#0066cc",
+              fontSize: "0.9rem",
+              marginTop: "6px",
+            }}
           >
             レビューコメントを見る {isOpen ? "▲閉じる" : "▼開く"}
           </div>
-      
-      {/* 展開されているときだけコメント一覧を表示 */}
+
+          {/* 展開されているときだけコメント一覧を表示 */}
           {isOpen && (
-            <ul className="review-list" style={{ marginTop: "6px", paddingLeft: "1.2rem", fontSize: "0.9rem" }}>
+            <ul
+              className="review-list"
+              style={{
+                marginTop: "6px",
+                paddingLeft: "1.2rem",
+                fontSize: "0.9rem",
+              }}
+            >
               {gift.reviews!.map((comment, index) => (
                 <li key={index}>{comment}</li>
-))}
+              ))}
             </ul>
           )}
         </>
