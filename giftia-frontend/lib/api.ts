@@ -74,7 +74,9 @@ export type ChatSource = {
 export type ChatAnswer = {
   answer: string;
   sources: ChatSource[];
-  status: string;
+  unconfirmed: string[]; // 商品情報から確認できなかった点（例：入り数）。画面には表示しない（回答の本文に書かれる）
+  share_message: string; // 一緒に選ぶ人へ送る一文。出せないときは空文字
+  status: string; // "ok"：出典を確認できた ／ "no_evidence"：確認できる出典がない
 };
 
 // 商品1件について1問だけ質問する。signal で、閉じたときや商品を切り替えたときに通信を止める

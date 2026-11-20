@@ -15,7 +15,8 @@ from database import fetch_all
 NEGATIVE_RATING_MAX = 2
 
 # 1商品あたりに集めるレビューの上限。AI に渡すのは、この中から chat.py が選んだ数件だけ
-MAX_REVIEWS = 100
+# 開発DBでコメント付きレビューが最も多い商品は163件（2026-11-20 確認）。全件を選択の対象にできるよう200件にする
+MAX_REVIEWS = 200
 
 
 def get_product_evidence(product_id: str) -> dict | None:

@@ -117,7 +117,8 @@ def test_spec_omits_null_values(fake_db):
 
 def test_caps_number_of_reviews(fake_db):
     fake_db["reviews"] = [
-        {"review_id": f"R{i:04d}", "rating": 5, "comment": f"コメント{i}"} for i in range(150)
+        {"review_id": f"R{i:04d}", "rating": 5, "comment": f"コメント{i}"}
+        for i in range(product_evidence.MAX_REVIEWS + 50)
     ]
 
     reviews = [item for item in get_product_evidence("G0001")["items"] if item["kind"] == "review"]
