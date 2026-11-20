@@ -13,8 +13,17 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from chat import ChatRequest, build_stub_answer, is_chat_available
+from chat import (
+    ChatRequest,
+    ChatUnavailable,
+    InvalidModelResponse,
+    ModelError,
+    ModelTimeout,
+    answer_question,
+    is_chat_available,
+)
 from database import fetch_all
+from product_evidence import get_product_evidence
 
 load_dotenv()  # .env を読む（DB の接続情報・CORS の許可）
 
@@ -119,18 +128,25 @@ def search(
 
 @app.post("/api/chat")
 def chat(req: ChatRequest):
-    """FR-03：商品1件について1問ずつ答える（第1段階は固定の応答）"""
+    """FR-03：商品1件について1問ずつ、商品説明とレビューを根拠に AI が答える"""
     # ① 送別シーンが選ばれているかを API 側でも確かめる（画面の表示だけに頼らない）
     if not is_chat_available(req.scene_tag):
         raise HTTPException(status_code=400, detail="送別シーンが選ばれていないため、チャットは使えません")
 
-    # ② 商品 ID が実在するかをサーバーで照合する
-    rows = fetch_all("SELECT product_id, product_name FROM products WHERE product_id = %s", (req.product_id,))
-    if not rows:
+    # ② 商品 ID をサーバーで照合し、根拠（商品説明・商品仕様・レビュー）を集める
+    evidence = get_product_evidence(req.product_id)
+    if evidence is None:
         raise HTTPException(status_code=404, detail="商品が見つかりません")
 
-    # ③ 回答を返す（第2段階でここを AI の回答に置き換える）
-    return build_stub_answer(rows[0])
+    # ③ AI に聞いて、出典を照合した回答を返す。失敗したら画面が「再試行」を出せるようにエラーで返す
+    try:
+        return answer_question(evidence, req.question)
+    except ChatUnavailable:
+        raise HTTPException(status_code=503, detail="AI チャットの設定が済んでいません")
+    except ModelTimeout:
+        raise HTTPException(status_code=504, detail="AI の応答が時間内に返りませんでした")
+    except (ModelError, InvalidModelResponse):
+        raise HTTPException(status_code=502, detail="AI の回答を取得できませんでした")
 
 
 def to_gift(r: dict) -> dict:

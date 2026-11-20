@@ -17,6 +17,7 @@ const EXAMPLE_QUESTIONS = [
 const MAX_QUESTION_LENGTH = 200; // backend/chat.py と同じ上限
 
 type Phase = "idle" | "loading" | "done" | "error";
+type CopyState = "idle" | "copied" | "failed";
 
 export default function ProductChat({
   gift,
@@ -31,6 +32,7 @@ export default function ProductChat({
   const [asked, setAsked] = useState(""); // 送信した質問
   const [phase, setPhase] = useState<Phase>("idle");
   const [answer, setAnswer] = useState<ChatAnswer | null>(null);
+  const [copy, setCopy] = useState<CopyState>("idle"); // 「みんなに伝える一文」のコピー結果
   const controllerRef = useRef<AbortController | null>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
@@ -60,6 +62,7 @@ export default function ProductChat({
     setAsked(q);
     setQuestion("");
     setAnswer(null);
+    setCopy("idle");
     setPhase("loading");
     try {
       const result = await askProduct(gift.id, q, sceneTag, controller.signal);
@@ -68,6 +71,16 @@ export default function ProductChat({
     } catch (err) {
       if ((err as Error).name === "AbortError") return; // 閉じた・切り替えた：何も表示しない
       setPhase("error");
+    }
+  }
+
+  // 一文をクリップボードにコピーする。できないブラウザでは、手でコピーしてもらうよう表示する
+  async function copyShareMessage(text: string) {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopy("copied");
+    } catch {
+      setCopy("failed");
     }
   }
 
@@ -115,6 +128,25 @@ export default function ProductChat({
                     <li key={s.id}>{s.label}</li>
                   ))}
                 </ul>
+              </div>
+            )}
+            {answer.share_message && (
+              <div className={styles.sources}>
+                <b>みんなに伝える一文</b>
+                <p>{answer.share_message}</p>
+                <div className={styles.chips}>
+                  <button
+                    type="button"
+                    onClick={() => copyShareMessage(answer.share_message)}
+                  >
+                    {copy === "copied" ? "コピーしました" : "コピー"}
+                  </button>
+                </div>
+                {copy === "failed" && (
+                  <p role="alert">
+                    コピーできませんでした。文を選んでコピーしてください。
+                  </p>
+                )}
               </div>
             )}
           </div>
