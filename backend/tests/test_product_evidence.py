@@ -31,11 +31,14 @@ REVIEWS = [
 
 @pytest.fixture
 def fake_db(monkeypatch):
-    """products / reviews への SELECT を、上のデータで答える偽の fetch_all に差し替える"""
-    state = {"products": {"G0001": dict(PRODUCT)}, "reviews": list(REVIEWS), "queries": []}
+    """products / product_facts / reviews への SELECT を、上のデータで答える偽の fetch_all に差し替える
+    facts は最初は空（product_facts に行がない商品）。テストごとに {fact: value} を入れる"""
+    state = {"products": {"G0001": dict(PRODUCT)}, "facts": {}, "reviews": list(REVIEWS), "queries": []}
 
     def fake_fetch_all(query, params=()):
         state["queries"].append(query)
+        if "FROM product_facts" in query:
+            return [{"fact": fact, "value": value} for fact, value in state["facts"].items()]
         if "FROM products" in query:
             product = state["products"].get(params[0])
             return [product] if product else []
@@ -113,6 +116,50 @@ def test_spec_omits_null_values(fake_db):
 
     by_id = {item["source_id"]: item for item in get_product_evidence("G0001")["items"]}
     assert by_id["G0001:spec"]["text"] == "価格：3,240円／メッセージカード：非対応"
+
+
+def _spec_text(fake_db) -> str:
+    by_id = {item["source_id"]: item for item in get_product_evidence("G0001")["items"]}
+    return by_id["G0001:spec"]["text"]
+
+
+BASE_SPEC = "価格：3,240円／サイズ：幅20cm／配送日数：3日／ラッピング：対応／メッセージカード：非対応"
+
+
+def test_spec_adds_room_temp_and_indiv_wrap_when_true(fake_db):
+    fake_db["facts"] = {"room_temp": 1, "indiv_wrap": 1}
+
+    assert _spec_text(fake_db) == BASE_SPEC + "／常温保存：可／個包装：あり"
+
+
+def test_spec_adds_room_temp_and_indiv_wrap_when_false(fake_db):
+    # 0 は「判定できた結果が いいえ」なので書く（要冷蔵の商品、1箱にまとめて梱包の商品など）
+    fake_db["facts"] = {"room_temp": 0, "indiv_wrap": 0}
+
+    assert _spec_text(fake_db) == BASE_SPEC + "／常温保存：不可／個包装：なし"
+
+
+def test_spec_omits_facts_without_rows(fake_db):
+    # 行がない＝説明文に欄がなく判定できない。「なし」と書かない
+    fake_db["facts"] = {"indiv_wrap": 1}
+
+    assert _spec_text(fake_db) == BASE_SPEC + "／個包装：あり"
+
+
+def test_spec_ignores_unused_and_unexpected_facts(fake_db):
+    # SQL で絞っていても、使わない項目や想定外の値が来たら書かない
+    fake_db["facts"] = {"shelf_life_days": 240, "office_orders": 12, "room_temp": 2}
+
+    assert _spec_text(fake_db) == BASE_SPEC
+
+
+def test_facts_query_reads_only_room_temp_and_indiv_wrap(fake_db):
+    get_product_evidence("G0001")
+
+    facts_queries = [q for q in fake_db["queries"] if "FROM product_facts" in q]
+    assert len(facts_queries) == 1
+    assert "'room_temp'" in facts_queries[0] and "'indiv_wrap'" in facts_queries[0]
+    assert "shelf_life_days" not in facts_queries[0] and "office_orders" not in facts_queries[0]
 
 
 def test_caps_number_of_reviews(fake_db):
