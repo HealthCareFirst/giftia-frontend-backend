@@ -18,6 +18,7 @@ export type Gift = {
 
 // 画面から渡す検索条件（2つのタブの分をまとめて持つ）
 export type SearchCondition = {
+  scene: string; // いまの検索：シーン（空なら送らない）。送別は送別タグ付き商品を一致数順・最大5件（FR-01）
   keyword: string; // いまの検索：キーワード
   category: string; // いまの検索：カテゴリー（空ならすべて）
   indivWrap: boolean; // 取引先へのお礼：個包装だけ
@@ -32,6 +33,7 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 export async function searchGifts(c: SearchCondition): Promise<Gift[]> {
   // ① 条件を URL のクエリ（?q=...&category=...）に組み立てる。空の条件は送らない
   const params = new URLSearchParams();
+  if (c.scene) params.set("scene", c.scene); // FR-01：シーンを送る
   if (c.keyword) params.set("q", c.keyword);
   if (c.category) params.set("category", c.category);
   if (c.indivWrap) params.set("indiv_wrap", "true");

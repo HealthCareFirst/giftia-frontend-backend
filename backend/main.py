@@ -14,6 +14,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from chat import (
+    FAREWELL_SCENE,
     ChatRequest,
     ChatUnavailable,
     InvalidModelResponse,
@@ -28,6 +29,8 @@ from product_evidence import get_product_evidence
 load_dotenv()  # .env を読む（DB の接続情報・CORS の許可）
 
 app = FastAPI(title="Giftia Search API（2週目）")
+
+FAREWELL_LIMIT = 5  # FR-01：送別シーンで返す最大件数
 
 # ── CORS ───────────────────────────────────────
 # 画面（http://localhost:3000）と API（http://localhost:8000）は別のアプリ＝オリジンが違う。
@@ -49,6 +52,7 @@ def health():
 def search(
     q: str = Query(default="", description="キーワード（空白区切りで複数。すべてを含む商品）"),
     category: str = Query(default="", description="カテゴリー（空ならすべて）"),
+    scene: str = Query(default="", description="シーン。送別のときは送別タグ付き商品を一致数順に最大5件（FR-01）"),
     indiv_wrap: bool = Query(default=False, description="true なら、説明文に「個包装」とある商品だけ"),
     room_temp: bool = Query(default=False, description="true なら、説明文に「常温」とある商品だけ"),  # 常温追加
     price_min: int | None = Query(default=None, ge=0, description="価格の下限（以上）"),
@@ -56,6 +60,10 @@ def search(
     limit: int = Query(default=20, ge=1, le=100, description="返す件数"),
 ):
     """条件に合う商品を、人気順（直近1年の販売数）で上位 limit 件返す"""
+    # FR-01：送別シーンは別の並べ方（送別タグ＋検索語の一致数順・最大5件）。それ以外のシーンはこれまでどおり
+    if scene == FAREWELL_SCENE:
+        return search_farewell(q, category)
+
     # ① 条件を WHERE に1つずつ足す（値は %s で渡し、SQL の文字列に直接つなげない）
     where, params = ["stock > 0"], []  # 在庫切れは出さない
     for word in q.split():  # 【穴1】q を空白で区切って1語ずつにする（文字列のメソッド）
@@ -89,41 +97,81 @@ def search(
             LIMIT %s""",
         (*params, limit),
     )
-    # --- ③ ここから下を「一括取得（バッチ処理）」に書き換える ---
+    # ③ レビューを一括取得して、画面の Gift 型に詰め替えて返す
+    return {"total": total, "results": to_gifts_with_reviews(rows)}
+
+
+def search_farewell(q: str, category: str) -> dict:
+    """FR-01：送別タグ付き・在庫ありの商品を、検索語の一致数 → 評価 → レビュー件数 → 商品ID の順で最大5件返す"""
+    # 同じ語が重複していても1語として数える（例：「お酒 お酒」は「お酒」と同じ）※未決事項：チームで確認
+    words = list(dict.fromkeys(q.split()))
+
+    # ① 一致数：1語ごとに「商品名・ブランド・説明文のどれかに含めば1点」。MySQL では条件式が 1/0 になるので足し算できる
+    score_parts, score_params = [], []
+    for word in words:
+        score_parts.append("(p.product_name LIKE %s OR p.brand LIKE %s OR p.description LIKE %s)")
+        score_params += [f"%{word}%"] * 3
+    score_sql = " + ".join(score_parts) if score_parts else "0"
+
+    # ② 候補はキーワードで絞らず、送別タグで取る（キーワードだけでは候補が足りないため）
+    where = [
+        "p.stock > 0",
+        "EXISTS (SELECT 1 FROM product_scenes ps WHERE ps.product_id = p.product_id AND ps.scene_tag = %s)",
+    ]
+    where_params = [FAREWELL_SCENE]
+    if category:
+        where.append("p.category = %s")
+        where_params.append(category)
+    condition = " AND ".join(where)
+
+    total = fetch_all(f"SELECT COUNT(*) AS n FROM products p WHERE {condition}", tuple(where_params))[0]["n"]
+    rows = fetch_all(
+        f"""SELECT p.product_id, p.category, p.brand, p.product_name, p.price, p.rating, p.review_count,
+                   ({score_sql}) AS match_count
+            FROM products p
+            WHERE {condition}
+            ORDER BY match_count DESC,
+                     p.rating IS NULL, p.rating DESC,
+                     p.review_count DESC,
+                     p.product_id
+            LIMIT %s""",
+        # SELECT 内の %s（一致数）が先、WHERE の %s が後。順番を入れ替えると順位がおかしくなる
+        (*score_params, *where_params, FAREWELL_LIMIT),
+    )
+    # rating が NULL の商品は後ろに回す（p.rating IS NULL が 0→1 の順）※未決事項：チームで確認
+    return {"total": total, "results": to_gifts_with_reviews(rows)}
+
+
+def to_gifts_with_reviews(rows: list[dict]) -> list[dict]:
+    """商品の行にレビューコメントを付けて、Gift 型のリストにする（レビューは IN 句で1回のSQLでまとめて取る）"""
+    if not rows:
+        return []
+
+    # 1. 取得した商品すべての product_id をリストにする
+    product_ids = [r["product_id"] for r in rows]
+
+    # 2. IN句を使って、該当する商品のレビューを「1回のSQL」でまとめて取得する
+    format_strings = ','.join(['%s'] * len(product_ids))
+    all_reviews = fetch_all(
+        f"""SELECT product_id, comment 
+            FROM reviews 
+            WHERE product_id IN ({format_strings}) 
+              AND comment IS NOT NULL 
+              AND comment != ''""",
+        tuple(product_ids)
+    )
+
+    # 3. 取得した全レビューを product_id ごとに辞書（マップ）に整理する
+    reviews_map = {}
+    for rev in all_reviews:
+        reviews_map.setdefault(rev["product_id"], []).append(rev["comment"])
+
+    # 4. 各商品データに、整理したレビューの配列を割り当てる（DBへの追加クエリは0回！）
     results = []
-    if rows:
-        # 1. 取得した商品すべての product_id をリストにする
-        product_ids = [r["product_id"] for r in rows]
-
-        # 2. IN句を使って、該当する商品のレビューを「1回のSQL」でまとめて取得する
-        format_strings = ','.join(['%s'] * len(product_ids))
-        all_reviews = fetch_all(
-            f"""SELECT product_id, comment 
-                FROM reviews 
-                WHERE product_id IN ({format_strings}) 
-                  AND comment IS NOT NULL 
-                  AND comment != ''""",
-            tuple(product_ids)
-        )
-
-        # 3. 取得した全レビューを product_id ごとに辞書（マップ）に整理する
-        reviews_map = {}
-        for rev in all_reviews:
-            pid = rev["product_id"]
-            if pid not in reviews_map:
-                reviews_map[pid] = []
-            reviews_map[pid].append(rev["comment"])
-
-        # 4. 各商品データに、整理したレビューの配列を割り当てる（DBへの追加クエリは0回！）
-        for r in rows:
-            r["reviews"] = reviews_map.get(r["product_id"], [])
-            results.append(to_gift(r))
-
-    # ④ 画面の Gift 型に詰め替えたリストを返す
-    return {"total": total, "results": results}
-
-    # ③ DB の行を、画面の Gift 型（1週目）に詰め替えて返す
-    #return {"total": total, "results": [to_gift(r) for r in rows]}
+    for r in rows:
+        r["reviews"] = reviews_map.get(r["product_id"], [])
+        results.append(to_gift(r))
+    return results
 
 
 @app.post("/api/chat")
