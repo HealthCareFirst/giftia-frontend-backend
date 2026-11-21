@@ -13,6 +13,8 @@ from typing import Annotated
 from openai import APITimeoutError, OpenAI, OpenAIError
 from pydantic import BaseModel, StringConstraints
 
+from farewell import FAREWELL_WORDS, is_farewell_related
+
 logger = logging.getLogger(__name__)
 
 # チャットを使えるシーン。FR-01（シーン選択）の画面から送られる値とそろえる
@@ -24,8 +26,8 @@ MAX_QUESTION_LENGTH = 200
 # AI に渡すレビューの件数。商品説明と商品仕様は別に必ず渡す
 MAX_REVIEWS_FOR_MODEL = 5
 
-# これらの言葉を含むレビューは、送別との関係が高いとみなして優先する
-FAREWELL_WORDS = ("送別", "職場", "異動", "退職", "転勤", "餞別")
+# 送別関連の言葉（FAREWELL_WORDS）と判定（is_farewell_related）は farewell.py にある。
+# 商品カードのレビュー表示（FR-02）と同じ判定を使うため
 
 # 質問にこれらの言葉があるときだけ、レビュー件数の根拠を AI に渡す（ルール13）。
 # いつも渡すと、関係のない質問の回答にも件数が混ざるため
@@ -107,7 +109,7 @@ def select_evidence(items: list[dict], question: str) -> list[dict]:
         if item["kind"] != "review":
             continue
         score = len(question_bigrams & _bigrams(item["text"]))
-        if any(word in item["text"] for word in FAREWELL_WORDS):
+        if is_farewell_related(item["text"]):
             score += 2
         scored.append((-score, item["source_id"], item))
     scored.sort(key=lambda t: (t[0], t[1]))
@@ -136,7 +138,11 @@ SYSTEM_PROMPT = """あなたはギフト通販サイト Giftia の購入相談�
    question「香りは強い？」→「〇〇のハンドクリーム（2,400円）、香りの強さは商品情報では分からなかった。」
    question「レビューを要約」→「〇〇のクッキー（3,000円）、個包装の12個入りだよ。」（レビューの内容は share_quote に入れる）
 12. share_message にはレビューの内容を書きません（「好評です」「喜ばれます」のようなまとめ方も書きません）。レビューを伝えたいとき（レビューについての質問や、質問の点にレビューが答えているとき）は、share_quote に、その review の source_id と、原文からそのまま抜き出した30字以内の一部を入れます。言い換えや要約はせず、原文の文字をそのまま使います。伝えるレビューがないときは、どちらも空文字にします。
-13. label が「レビュー件数」の evidence には、この商品のレビューの総数と、そのうち送別に関係する言葉（送別・職場・異動・退職・転勤・餞別）を含むレビューの数が書かれています。ほかの evidence には一部のレビューしか入っていないので、件数はこの evidence で答えます。この evidence を使うのは、「送別で贈った例はある？」のように送別での例を聞かれたときと、レビューの件数を聞かれたときだけです。そのときは、最初に数で「ある／ない」を答え、この evidence の source_id を source_ids に入れます（例：「送別で贈ったというレビューが12件あります」「レビューは3件ありますが、送別で贈ったというものはありません」「この商品にはまだレビューがありません」）。例があるときは、レビューの evidence から原文の一部を引用します。例がないときは、そのことをはっきり伝えたあとで、ルール10のおすすめを続けてもかまいません。share_message にも、レビュー件数の evidence に書かれた数をそのまま書きます。ほかの質問（レビューの要約など）では、これまでのルールどおり答えます。"""
+13. label が「レビュー件数」の evidence には、この商品のレビューの総数と、そのうち送別に関係する言葉（{farewell_words}）を含むレビューの数が書かれています。ほかの evidence には一部のレビューしか入っていないので、件数はこの evidence で答えます。この evidence を使うのは、「送別で贈った例はある？」のように送別での例を聞かれたときと、レビューの件数を聞かれたときだけです。そのときは、最初に数で「ある／ない」を答え、この evidence の source_id を source_ids に入れます（例：「送別で贈ったというレビューが12件あります」「レビューは3件ありますが、送別で贈ったというものはありません」「この商品にはまだレビューがありません」）。例があるときは、レビューの evidence から原文の一部を引用します。例がないときは、そのことをはっきり伝えたあとで、ルール10のおすすめを続けてもかまいません。share_message にも、レビュー件数の evidence に書かれた数をそのまま書きます。ほかの質問（レビューの要約など）では、これまでのルールどおり答えます。""".replace(
+    # ルール13の言葉の一覧は farewell.py から組み立てる（件数の数え方と、AI への説明を食い違わせない）
+    "{farewell_words}",
+    "・".join(FAREWELL_WORDS),
+)
 
 # 回答の形。Structured Outputs で、この形以外を返させない
 RESPONSE_FORMAT = {
@@ -190,7 +196,7 @@ def has_few_reviews(items: list[dict]) -> bool:
     return not any(
         item["kind"] == "review"
         and not item.get("negative")
-        and any(word in item["text"] for word in FAREWELL_WORDS)
+        and is_farewell_related(item["text"])
         for item in items
     )
 
@@ -200,7 +206,7 @@ def review_stats_item(product: dict, items: list[dict]) -> dict:
     「送別で贈った例はある？」のような質問には、この根拠で答えさせる（ルール13）。
     ほかの根拠と同じく出典として照合されるので、件数で答えた回答でも「みんなに伝える一文」が出せる"""
     reviews = [item for item in items if item["kind"] == "review"]
-    farewell = sum(any(word in r["text"] for word in FAREWELL_WORDS) for r in reviews)
+    farewell = sum(is_farewell_related(r["text"]) for r in reviews)
     return {
         "source_id": f"{product['product_id']}:review_stats",
         "kind": "stats",
