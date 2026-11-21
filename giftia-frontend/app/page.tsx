@@ -76,13 +76,21 @@ export default function Home() {
     const condition =
       mode === "standard"
         ? {
+            scene,
             keyword,
             category,
             indivWrap: false,
             roomTemp: false,
             priceBand: "",
           }
-        : { keyword: "", category: "", indivWrap, roomTemp, priceBand };
+        : {
+            scene: "",
+            keyword: "",
+            category: "",
+            indivWrap,
+            roomTemp,
+            priceBand,
+          };
     try {
       setResults(await searchGifts(condition));
     } catch (err) {
@@ -127,6 +135,9 @@ export default function Home() {
               onChange={(e) => {
                 const v = e.target.value;
                 setScene(isScene(v) ? v : "");
+                // シーンが変わると結果の意味が変わるので、検索結果・エラー・チャットを消す（FR-01）
+                setResults(null);
+                setError("");
                 setChatGift(null);
               }}
             >
@@ -196,31 +207,42 @@ export default function Home() {
       {/* 結果：同じ ResultCard を map で並べる（使い回し） */}
       {results && (
         <section>
-          <p className="summary">上位 {results.length} 件</p>
-          {/* チャットを開いたら、一覧を左・チャットを右に並べる（狭い画面ではチャットを全画面） */}
-          <div
-            className={chatEnabled && chatGift ? styles.withChat : undefined}
-          >
-            <div className="grid">
-              {results.map((g, i) => (
-                <ResultCard
-                  key={g.id}
-                  gift={g}
-                  rank={i + 1}
-                  onAsk={chatEnabled ? () => setChatGift(g) : undefined}
-                  selected={chatEnabled && chatGift?.id === g.id}
-                />
-              ))}
-            </div>
-            {chatEnabled && chatGift && (
-              <ProductChat
-                key={chatGift.id} // 商品が変わったら作り直す（質問欄・回答のリセット）
-                gift={chatGift}
-                sceneTag={scene}
-                onClose={closeChat}
-              />
-            )}
-          </div>
+          {results.length === 0 ? (
+            // 0件のときの文言（FR-01）
+            <p className="summary">
+              条件に合う商品が見つかりませんでした。キーワードやカテゴリーを変えてお試しください。
+            </p>
+          ) : (
+            <>
+              <p className="summary">上位 {results.length} 件</p>
+              {/* チャットを開いたら、一覧を左・チャットを右に並べる（狭い画面ではチャットを全画面） */}
+              <div
+                className={
+                  chatEnabled && chatGift ? styles.withChat : undefined
+                }
+              >
+                <div className="grid">
+                  {results.map((g, i) => (
+                    <ResultCard
+                      key={g.id}
+                      gift={g}
+                      rank={i + 1}
+                      onAsk={chatEnabled ? () => setChatGift(g) : undefined}
+                      selected={chatEnabled && chatGift?.id === g.id}
+                    />
+                  ))}
+                </div>
+                {chatEnabled && chatGift && (
+                  <ProductChat
+                    key={chatGift.id} // 商品が変わったら作り直す（質問欄・回答のリセット）
+                    gift={chatGift}
+                    sceneTag={scene}
+                    onClose={closeChat}
+                  />
+                )}
+              </div>
+            </>
+          )}
         </section>
       )}
     </main>
