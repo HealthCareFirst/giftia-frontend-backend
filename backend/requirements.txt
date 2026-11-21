@@ -6,3 +6,4 @@ cryptography>=42      # pymysql が Azure の認証方式（caching_sha2_passwor
 pytest>=8             # テスト（backend/tests）
 httpx>=0.27           # テストで FastAPI の TestClient が使う
 openai>=3.16          # FR-03 の AI チャット（chat.py）。キーは .env の OPENAI_API_KEY
+azure-functions       # Azure Functions で FastAPI を動かす入口（function_app.py）が使う
