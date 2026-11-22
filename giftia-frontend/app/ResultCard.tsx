@@ -59,7 +59,7 @@ export default function ResultCard({
         >
           {selected ? "質問中" : "この商品について聞く"}
         </button>
-
+      )}
       {/* 【ポイント】hasReviews が true のとき（コメントがあるとき）だけ、下のトグルボタンを表示する */}
       {hasReviews && (
         <>
@@ -72,10 +72,24 @@ export default function ResultCard({
       
       {/* 展開されているときだけコメント一覧を表示 */}
           {isOpen && (
-            <ul className="review-list" style={{ marginTop: "6px", paddingLeft: "1.2rem", fontSize: "0.9rem" }}>
-              {gift.reviews!.map((comment, index) => (
-                <li key={index}>{comment}</li>
-))}
+            <ul
+              className="review-list"
+              style={{
+                marginTop: "6px",
+                paddingLeft: "1.2rem",
+                fontSize: "0.9rem",
+              }}
+            >
+              {gift.reviews!.map((review, index) => (
+                <li key={index} style={{ marginBottom: "4px" }}>
+                  {review.authorLabel && (
+                    <span style={{ fontWeight: 600, marginRight: "6px" }}>
+                      ({review.authorLabel})
+                    </span>
+                  )}
+                  <span>{review.comment}</span>
+                </li>
+              ))}
             </ul>
           )}
         </>

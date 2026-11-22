@@ -80,41 +80,140 @@ def search(
             LIMIT %s""",
         (*params, limit),
     )
-    # --- ③ ここから下を「一括取得（バッチ処理）」に書き換える ---
-    results = []
-    if rows:
-        # 1. 取得した商品すべての product_id をリストにする
-        product_ids = [r["product_id"] for r in rows]
 
-        # 2. IN句を使って、該当する商品のレビューを「1回のSQL」でまとめて取得する
-        format_strings = ','.join(['%s'] * len(product_ids))
-        all_reviews = fetch_all(
-            f"""SELECT product_id, comment 
-                FROM reviews 
-                WHERE product_id IN ({format_strings}) 
-                  AND comment IS NOT NULL 
-                  AND comment != ''""",
-            tuple(product_ids)
+    # --- ③ ここから下を「一括取得（バッチ処理）」に書き換える ---
+    # ③ レビューを一括取得して、画面の Gift 型に詰め替えて返す
+    return {"total": total, "results": to_gifts_with_reviews(rows)}
+
+
+def search_farewell(q: str, category: str) -> dict:
+    """FR-01：送別タグ付き・在庫ありの商品を、検索語の一致数 → 評価 → レビュー件数 → 商品ID の順で最大5件返す"""
+    # 同じ語が重複していても1語として数える（例：「お酒 お酒」は「お酒」と同じ）※未決事項：チームで確認
+    words = list(dict.fromkeys(q.split()))
+
+    # ① 一致数：1語ごとに「商品名・ブランド・説明文のどれかに含めば1点」。MySQL では条件式が 1/0 になるので足し算できる
+    score_parts, score_params = [], []
+    for word in words:
+        score_parts.append("(p.product_name LIKE %s OR p.brand LIKE %s OR p.description LIKE %s)")
+        score_params += [f"%{word}%"] * 3
+    score_sql = " + ".join(score_parts) if score_parts else "0"
+
+    # ② 候補はキーワードで絞らず、送別タグで取る（キーワードだけでは候補が足りないため）
+    where = [
+        "p.stock > 0",
+        "EXISTS (SELECT 1 FROM product_scenes ps WHERE ps.product_id = p.product_id AND ps.scene_tag = %s)",
+    ]
+    where_params = [FAREWELL_SCENE]
+    if category:
+        where.append("p.category = %s")
+        where_params.append(category)
+    condition = " AND ".join(where)
+
+    total = fetch_all(f"SELECT COUNT(*) AS n FROM products p WHERE {condition}", tuple(where_params))[0]["n"]
+    rows = fetch_all(
+        f"""SELECT p.product_id, p.category, p.brand, p.product_name, p.price, p.rating, p.review_count,
+                   ({score_sql}) AS match_count
+            FROM products p
+            WHERE {condition}
+            ORDER BY match_count DESC,
+                     p.rating IS NULL, p.rating DESC,
+                     p.review_count DESC,
+                     p.product_id
+            LIMIT %s""",
+        # SELECT 内の %s（一致数）が先、WHERE の %s が後。順番を入れ替えると順位がおかしくなる
+        (*score_params, *where_params, FAREWELL_LIMIT),
+    )
+    # rating が NULL の商品は後ろに回す（p.rating IS NULL が 0→1 の順）※未決事項：チームで確認
+    return {"total": total, "results": to_gifts_with_reviews(rows)}
+
+
+    #reviews テーブル（エイリアス r）に users テーブル（エイリアス u）を LEFT JOIN で結合し、
+    # age_group と gender を1回のSQLでまとめて取得します。
+    # 性別は "女性" または "男性" のみそのまま返し、それ以外（None・空文字・その他の値）は "未回答" にします。
+
+def _format_author_label(age_group: str | None, gender: str | None) -> str:
+    """年齢層と性別から表示用ラベル（例: '30代・女性'、'30代・未回答'）を作る"""
+    clean_age = (age_group or "").strip()
+    clean_gender = (gender or "").strip()
+    gender_label = clean_gender if clean_gender in ("女性", "男性") else "未回答"
+
+    if clean_age:
+        return f"{clean_age}・{gender_label}"
+    return gender_label
+
+def to_gifts_with_reviews(rows: list[dict]) -> list[dict]:
+    """商品の行にレビュー（属性ラベル+コメント）を付けて、Gift 型のリストにする（レビューは IN 句で1回のSQLでまとめて取る）"""
+    if not rows:
+        return []
+
+    # 1. 取得した商品すべての product_id をリストにする
+    product_ids = [r["product_id"] for r in rows]
+
+    # 2. IN句を使って、該当する商品のレビューを「1回のSQL」でまとめて取得する
+    format_strings = ','.join(['%s'] * len(product_ids))
+
+    # r.user_id と u.user_id を紐づけて一括取得（ユーザー情報が欠損していてもレビューは残すため LEFT JOIN）
+    all_reviews = fetch_all(
+        f"""SELECT
+                r.product_id,
+                r.comment,
+                u.age_group,
+                u.gender
+            FROM reviews r
+            LEFT JOIN users u ON r.user_id = u.user_id
+            WHERE r.product_id IN ({format_strings}) 
+              AND r.comment IS NOT NULL 
+              AND TRIM(r.comment) != ''""",
+        tuple(product_ids)
+    )
+
+    # 3. 取得した全レビューを product_id ごとに辞書（マップ）に整理する
+    reviews_map: dict[str, list[dict]] = {}
+    for rev in all_reviews:
+        clean_comment = rev["comment"].strip()
+        if not clean_comment:
+            continue
+
+        reviews_map.setdefault(rev["product_id"], []).append(
+            {
+                "authorLabel": _format_author_label(rev.get("age_group"), rev.get("gender")),
+                "comment": clean_comment,
+            }
         )
 
+    # 4. 各商品データに、整理したレビューの配列を割り当てる（DBへの追加クエリは0回！）
+    #results = []
+    #if rows:
+        # 1. 取得した商品すべての product_id をリストにする
+    #    product_ids = [r["product_id"] for r in rows]
+
+        # 2. IN句を使って、該当する商品のレビューを「1回のSQL」でまとめて取得する
+    #    format_strings = ','.join(['%s'] * len(product_ids))
+    #    all_reviews = fetch_all(
+    #        f"""SELECT product_id, comment 
+    #            FROM reviews 
+    #            WHERE product_id IN ({format_strings}) 
+    #              AND comment IS NOT NULL 
+    #              AND comment != ''""",
+    #        tuple(product_ids)
+    #    )
+
         # 3. 取得した全レビューを product_id ごとに辞書（マップ）に整理する
-        reviews_map = {}
-        for rev in all_reviews:
-            pid = rev["product_id"]
-            if pid not in reviews_map:
-                reviews_map[pid] = []
-            reviews_map[pid].append(rev["comment"])
+    #    reviews_map = {}
+    #    for rev in all_reviews:
+    #        pid = rev["product_id"]
+    #        if pid not in reviews_map:
+    #            reviews_map[pid] = []
+    #        reviews_map[pid].append(rev["comment"])
 
         # 4. 各商品データに、整理したレビューの配列を割り当てる（DBへの追加クエリは0回！）
-        for r in rows:
-            r["reviews"] = reviews_map.get(r["product_id"], [])
-            results.append(to_gift(r))
+    results = []
+    for r in rows:
+        r["reviews"] = reviews_map.get(r["product_id"], [])
+        results.append(to_gift(r))
 
     # ④ 画面の Gift 型に詰め替えたリストを返す
-    return {"total": total, "results": results}
-
-    # ③ DB の行を、画面の Gift 型（1週目）に詰め替えて返す
-    #return {"total": total, "results": [to_gift(r) for r in rows]}
+    return results #{"total": total, "results": results}
 
 
 @app.post("/api/chat")
