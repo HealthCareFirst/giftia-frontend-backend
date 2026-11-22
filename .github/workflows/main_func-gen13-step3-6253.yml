@@ -68,6 +68,6 @@ jobs:
         with:
           app-name: "func-gen13-step3-6253"
           package: release.zip
-          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_F1240092BEB742A3BA71C7336BA5ACF2 }}
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_6E39C8EF777447588D6A7E8FE1C3C5C0 }}
           sku: "flexconsumption"
           remote-build: true
