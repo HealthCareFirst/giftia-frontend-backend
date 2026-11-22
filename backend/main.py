@@ -13,12 +13,24 @@ from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
-from chat import ChatRequest, build_stub_answer, is_chat_available
+from chat import (
+    FAREWELL_SCENE,
+    ChatRequest,
+    ChatUnavailable,
+    InvalidModelResponse,
+    ModelError,
+    ModelTimeout,
+    answer_question,
+    is_chat_available,
+)
 from database import fetch_all
+from product_evidence import get_product_evidence
 
 load_dotenv()  # .env を読む（DB の接続情報・CORS の許可）
 
 app = FastAPI(title="Giftia Search API（2週目）")
+
+FAREWELL_LIMIT = 5  # FR-01：送別シーンで返す最大件数
 
 # ── CORS ───────────────────────────────────────
 # 画面（http://localhost:3000）と API（http://localhost:8000）は別のアプリ＝オリジンが違う。
@@ -40,6 +52,7 @@ def health():
 def search(
     q: str = Query(default="", description="キーワード（空白区切りで複数。すべてを含む商品）"),
     category: str = Query(default="", description="カテゴリー（空ならすべて）"),
+    scene: str = Query(default="", description="シーン。送別のときは送別タグ付き商品を一致数順に最大5件（FR-01）"),
     indiv_wrap: bool = Query(default=False, description="true なら、説明文に「個包装」とある商品だけ"),
     room_temp: bool = Query(default=False, description="true なら、説明文に「常温」とある商品だけ"),  # 常温追加
     price_min: int | None = Query(default=None, ge=0, description="価格の下限（以上）"),
@@ -47,6 +60,10 @@ def search(
     limit: int = Query(default=20, ge=1, le=100, description="返す件数"),
 ):
     """条件に合う商品を、人気順（直近1年の販売数）で上位 limit 件返す"""
+    # FR-01：送別シーンは別の並べ方（送別タグ＋検索語の一致数順・最大5件）。それ以外のシーンはこれまでどおり
+    if scene == FAREWELL_SCENE:
+        return search_farewell(q, category)
+
     # ① 条件を WHERE に1つずつ足す（値は %s で渡し、SQL の文字列に直接つなげない）
     where, params = ["stock > 0"], []  # 在庫切れは出さない
     for word in q.split():  # 【穴1】q を空白で区切って1語ずつにする（文字列のメソッド）
@@ -80,8 +97,6 @@ def search(
             LIMIT %s""",
         (*params, limit),
     )
-
-    # --- ③ ここから下を「一括取得（バッチ処理）」に書き換える ---
     # ③ レビューを一括取得して、画面の Gift 型に詰め替えて返す
     return {"total": total, "results": to_gifts_with_reviews(rows)}
 
@@ -141,6 +156,7 @@ def _format_author_label(age_group: str | None, gender: str | None) -> str:
         return f"{clean_age}・{gender_label}"
     return gender_label
 
+
 def to_gifts_with_reviews(rows: list[dict]) -> list[dict]:
     """商品の行にレビュー（属性ラベル+コメント）を付けて、Gift 型のリストにする（レビューは IN 句で1回のSQLでまとめて取る）"""
     if not rows:
@@ -151,7 +167,6 @@ def to_gifts_with_reviews(rows: list[dict]) -> list[dict]:
 
     # 2. IN句を使って、該当する商品のレビューを「1回のSQL」でまとめて取得する
     format_strings = ','.join(['%s'] * len(product_ids))
-
     # r.user_id と u.user_id を紐づけて一括取得（ユーザー情報が欠損していてもレビューは残すため LEFT JOIN）
     all_reviews = fetch_all(
         f"""SELECT
@@ -211,25 +226,31 @@ def to_gifts_with_reviews(rows: list[dict]) -> list[dict]:
     for r in rows:
         r["reviews"] = reviews_map.get(r["product_id"], [])
         results.append(to_gift(r))
-
     # ④ 画面の Gift 型に詰め替えたリストを返す
     return results #{"total": total, "results": results}
 
 
 @app.post("/api/chat")
 def chat(req: ChatRequest):
-    """FR-03：商品1件について1問ずつ答える（第1段階は固定の応答）"""
+    """FR-03：商品1件について1問ずつ、商品説明とレビューを根拠に AI が答える"""
     # ① 送別シーンが選ばれているかを API 側でも確かめる（画面の表示だけに頼らない）
     if not is_chat_available(req.scene_tag):
         raise HTTPException(status_code=400, detail="送別シーンが選ばれていないため、チャットは使えません")
 
-    # ② 商品 ID が実在するかをサーバーで照合する
-    rows = fetch_all("SELECT product_id, product_name FROM products WHERE product_id = %s", (req.product_id,))
-    if not rows:
+    # ② 商品 ID をサーバーで照合し、根拠（商品説明・商品仕様・レビュー）を集める
+    evidence = get_product_evidence(req.product_id)
+    if evidence is None:
         raise HTTPException(status_code=404, detail="商品が見つかりません")
 
-    # ③ 回答を返す（第2段階でここを AI の回答に置き換える）
-    return build_stub_answer(rows[0])
+    # ③ AI に聞いて、出典を照合した回答を返す。失敗したら画面が「再試行」を出せるようにエラーで返す
+    try:
+        return answer_question(evidence, req.question)
+    except ChatUnavailable:
+        raise HTTPException(status_code=503, detail="AI チャットの設定が済んでいません")
+    except ModelTimeout:
+        raise HTTPException(status_code=504, detail="AI の応答が時間内に返りませんでした")
+    except (ModelError, InvalidModelResponse):
+        raise HTTPException(status_code=502, detail="AI の回答を取得できませんでした")
 
 
 def to_gift(r: dict) -> dict:

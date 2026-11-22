@@ -13,21 +13,26 @@ import { searchGifts, type Gift } from "@/lib/api";
 // FR-03：チャットを使えるシーン（backend/chat.py の FAREWELL_SCENE とそろえる）
 const FAREWELL_SCENE = "送別";
 
-export default function Home() {
-  const [scene, setScene] = useState<
-    | ""
-    | "誕生日"
-    | "送別"
-    | "お礼"
-    | "母の日"
-    | "お歳暮"
-    | "お中元"
-    | "結婚祝い"
-    | "父の日"
-    | "出産祝い"
-  >(""); // 選んだシーン
+const SCENES = [
+  "誕生日",
+  "送別",
+  "お礼",
+  "母の日",
+  "父の日",
+  "お歳暮",
+  "お中元",
+  "結婚祝い",
+  "出産祝い",
+] as const;
+type Scene = (typeof SCENES)[number];
 
+function isScene(v: string): v is Scene {
+  return (SCENES as readonly string[]).includes(v);
+}
+
+export default function Home() {
   // ① 状態（変化するデータ）を覚える箱
+  const [scene, setScene] = useState<Scene | "">("");
   const [mode, setMode] = useState<"standard" | "business">("standard"); // どのタブか
   const [keyword, setKeyword] = useState(""); // 入力した言葉
   const [category, setCategory] = useState(""); // 選んだカテゴリー
@@ -37,6 +42,7 @@ export default function Home() {
   const [priceBand, setPriceBand] = useState(""); // 価格帯（取引先へのお礼）
   const [results, setResults] = useState<Gift[] | null>(null); // 検索結果
   const [error, setError] = useState(""); // つながらないときの文言
+  const [loading, setLoading] = useState(false); // ← 追加：検索中かどうか
   const [chatGift, setChatGift] = useState<Gift | null>(null); // チャットで質問中の商品（FR-03）
   // チャットを使えるのは「いまの検索」タブで、送別シーンが選ばれているときだけ
   const chatEnabled = mode === "standard" && scene === FAREWELL_SCENE;
@@ -52,29 +58,48 @@ export default function Home() {
     }
   }
 
+  // タブを切り替える（結果・チャット・エラー表示をリセット）
+  function switchMode(next: "standard" | "business") {
+    setMode(next);
+    setResults(null);
+    setChatGift(null);
+    setError("");
+  }
   // ② 検索ボタンの処理（API に聞くので、結果が返るまで待つ＝async/await）
   async function onSearch(e: React.FormEvent) {
     e.preventDefault(); // ページの再読み込みを止める
+    if (loading) return; // 検索中なら何もしない（連打対策）
+    setLoading(true);
     setError("");
     setChatGift(null); // 結果が入れ替わるので、開いているチャットは閉じる
     // いま開いているタブの条件だけを送る（もう一方のタブの入力は送らない）
     const condition =
       mode === "standard"
         ? {
+            scene,
             keyword,
             category,
             indivWrap: false,
             roomTemp: false,
             priceBand: "",
-          } // 標準検索の条件に常温追加
-        : { keyword: "", category: "", indivWrap, roomTemp, priceBand }; // 取引先へのお礼の条件に常温追加
+          }
+        : {
+            scene: "",
+            keyword: "",
+            category: "",
+            indivWrap,
+            roomTemp,
+            priceBand,
+          };
     try {
-      setResults(
-        await searchGifts(condition),
-      ); /* 【穴8】searchGifts に condition を渡し、結果が返るまで待つ */
+      setResults(await searchGifts(condition));
     } catch (err) {
       setResults(null);
-      setError(`APIにつながりません：${(err as Error).message}`); // 原因はブラウザの Console に出る
+      setError(
+        `APIにつながりません：${err instanceof Error ? err.message : String(err)}`,
+      );
+    } finally {
+      setLoading(false); // 成功しても失敗しても、検索中を解除する
     }
   }
 
@@ -89,21 +114,13 @@ export default function Home() {
       <nav className="modes">
         <button
           className={mode === "standard" ? "on" : ""}
-          onClick={() => {
-            setMode("standard");
-            setResults(null);
-            setChatGift(null);
-          }}
+          onClick={() => switchMode("standard")}
         >
           いまの検索
         </button>
         <button
           className={mode === "business" ? "on" : ""}
-          onClick={() => {
-            setMode("business");
-            setResults(null);
-            setChatGift(null);
-          }}
+          onClick={() => switchMode("business")}
         >
           取引先へのお礼
         </button>
@@ -113,22 +130,23 @@ export default function Home() {
         {mode === "standard" ? (
           <>
             <select
+              aria-label="シーン"
               value={scene}
               onChange={(e) => {
-                setScene(e.target.value as typeof scene);
-                setChatGift(null); // シーンを変えたら、開いているチャットを閉じる（FR-03）
+                const v = e.target.value;
+                setScene(isScene(v) ? v : "");
+                // シーンが変わると結果の意味が変わるので、検索結果・エラー・チャットを消す（FR-01）
+                setResults(null);
+                setError("");
+                setChatGift(null);
               }}
             >
               <option value="">シーンを選ぶ</option>
-              <option value="誕生日">誕生日</option>
-              <option value="送別">送別</option>
-              <option value="お礼">お礼</option>
-              <option value="母の日">母の日</option>
-              <option value="父の日">父の日</option>
-              <option value="お歳暮">お歳暮</option>
-              <option value="お中元">お中元</option>
-              <option value="結婚祝い">結婚祝い</option>
-              <option value="出産祝い">出産祝い</option>
+              {SCENES.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
             </select>
 
             <input
@@ -177,7 +195,11 @@ export default function Home() {
             </select>
           </>
         )}
-        <button type="submit">検索</button>
+        <button type="submit" disabled={loading}>
+          {" "}
+          {/* ← こう置き換える */}
+          {loading ? "検索中…" : "検索"}
+        </button>
       </form>
 
       {error && <p className="summary">{error}</p>}
@@ -185,31 +207,42 @@ export default function Home() {
       {/* 結果：同じ ResultCard を map で並べる（使い回し） */}
       {results && (
         <section>
-          <p className="summary">上位 {results.length} 件</p>
-          {/* チャットを開いたら、一覧を左・チャットを右に並べる（狭い画面ではチャットを全画面） */}
-          <div
-            className={chatEnabled && chatGift ? styles.withChat : undefined}
-          >
-            <div className="grid">
-              {results.map((g, i) => (
-                <ResultCard
-                  key={g.id}
-                  gift={g}
-                  rank={i + 1}
-                  onAsk={chatEnabled ? () => setChatGift(g) : undefined}
-                  selected={chatEnabled && chatGift?.id === g.id}
-                />
-              ))}
-            </div>
-            {chatEnabled && chatGift && (
-              <ProductChat
-                key={chatGift.id} // 商品が変わったら作り直す（質問欄・回答のリセット）
-                gift={chatGift}
-                sceneTag={scene}
-                onClose={closeChat}
-              />
-            )}
-          </div>
+          {results.length === 0 ? (
+            // 0件のときの文言（FR-01）
+            <p className="summary">
+              条件に合う商品が見つかりませんでした。キーワードやカテゴリーを変えてお試しください。
+            </p>
+          ) : (
+            <>
+              <p className="summary">上位 {results.length} 件</p>
+              {/* チャットを開いたら、一覧を左・チャットを右に並べる（狭い画面ではチャットを全画面） */}
+              <div
+                className={
+                  chatEnabled && chatGift ? styles.withChat : undefined
+                }
+              >
+                <div className="grid">
+                  {results.map((g, i) => (
+                    <ResultCard
+                      key={g.id}
+                      gift={g}
+                      rank={i + 1}
+                      onAsk={chatEnabled ? () => setChatGift(g) : undefined}
+                      selected={chatEnabled && chatGift?.id === g.id}
+                    />
+                  ))}
+                </div>
+                {chatEnabled && chatGift && (
+                  <ProductChat
+                    key={chatGift.id} // 商品が変わったら作り直す（質問欄・回答のリセット）
+                    gift={chatGift}
+                    sceneTag={scene}
+                    onClose={closeChat}
+                  />
+                )}
+              </div>
+            </>
+          )}
         </section>
       )}
     </main>

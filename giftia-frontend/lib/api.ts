@@ -23,6 +23,7 @@ export type Gift = {
 
 // 画面から渡す検索条件（2つのタブの分をまとめて持つ）
 export type SearchCondition = {
+  scene: string; // いまの検索：シーン（空なら送らない）。送別は送別タグ付き商品を一致数順・最大5件（FR-01）
   keyword: string; // いまの検索：キーワード
   category: string; // いまの検索：カテゴリー（空ならすべて）
   indivWrap: boolean; // 取引先へのお礼：個包装だけ
@@ -37,6 +38,7 @@ const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 export async function searchGifts(c: SearchCondition): Promise<Gift[]> {
   // ① 条件を URL のクエリ（?q=...&category=...）に組み立てる。空の条件は送らない
   const params = new URLSearchParams();
+  if (c.scene) params.set("scene", c.scene); // FR-01：シーンを送る
   if (c.keyword) params.set("q", c.keyword);
   if (c.category) params.set("category", c.category);
   if (c.indivWrap) params.set("indiv_wrap", "true");
@@ -79,7 +81,9 @@ export type ChatSource = {
 export type ChatAnswer = {
   answer: string;
   sources: ChatSource[];
-  status: string;
+  unconfirmed: string[]; // 商品情報から確認できなかった点（例：入り数）。画面には表示しない（回答の本文に書かれる）
+  share_message: string; // 一緒に選ぶ人へ送る一文。出せないときは空文字
+  status: string; // "ok"：出典を確認できた ／ "no_evidence"：確認できる出典がない
 };
 
 // 商品1件について1問だけ質問する。signal で、閉じたときや商品を切り替えたときに通信を止める

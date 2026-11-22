@@ -1,0 +1,68 @@
+# 画面（giftia-frontend/）を Azure App Service の Web アプリにデプロイする
+# リリース手順書 3.4 の「直したあとのワークフロー」をもとに作成（手順書の frontend/ は giftia-frontend/ に読み替え）
+# （main の Branch protection により、デプロイセンターが yml を main に直接コミットできなかったため、PR で追加する）
+name: Build and deploy Node.js app to Azure Web App - gen13-app-step3-1-6253-fe
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "giftia-frontend/**"
+      - ".github/workflows/main_gen13-app-step3-1-6253-fe.yml"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: giftia-frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node.js version
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24.x" # Web アプリのランタイム（Node 24 LTS）と同じにする
+
+      # NEXT_PUBLIC_API_URL はビルドのときに画面のコードへ埋め込まれる（GitHub の Variables から読む）
+      - name: npm install, build, and test
+        env:
+          NEXT_PUBLIC_API_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+        run: |
+          npm install
+          npm run build --if-present
+          npm run test --if-present
+
+      # giftia-frontend/ の中身を、.next/（ビルド結果）も含めてリポジトリ直下の release.zip に固める
+      - name: Zip artifact for deployment
+        run: zip -qr ../release.zip . -x '.next/cache/*'
+
+      - name: Upload artifact for deployment job
+        uses: actions/upload-artifact@v4
+        with:
+          name: node-app
+          path: release.zip
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      # path: は書かない（書くと同じ名前のフォルダができ、zip が見つからなくなる）
+      - name: Download artifact from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: node-app
+
+      - name: "Deploy to Azure Web App"
+        uses: azure/webapps-deploy@v3
+        with:
+          app-name: "gen13-app-step3-1-6253-fe"
+          slot-name: "Production"
+          package: release.zip
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_68F221CD8FD648E18FB7765A4E084C9F }}
