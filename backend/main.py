@@ -24,6 +24,7 @@ from chat import (
     is_chat_available,
 )
 from database import fetch_all
+from farewell import is_farewell_related
 from product_evidence import get_product_evidence
 
 load_dotenv()  # .env を読む（DB の接続情報・CORS の許可）
@@ -139,7 +140,8 @@ def search_farewell(q: str, category: str) -> dict:
         (*score_params, *where_params, FAREWELL_LIMIT),
     )
     # rating が NULL の商品は後ろに回す（p.rating IS NULL が 0→1 の順）※未決事項：チームで確認
-    return {"total": total, "results": to_gifts_with_reviews(rows)}
+    # FR-02（Issue #28）：送別のときだけ、カードのレビューを送別関連から順に並べる
+    return {"total": total, "results": to_gifts_with_reviews(rows, farewell_first=True)}
 
 
     #reviews テーブル（エイリアス r）に users テーブル（エイリアス u）を LEFT JOIN で結合し、
@@ -157,8 +159,20 @@ def _format_author_label(age_group: str | None, gender: str | None) -> str:
     return gender_label
 
 
-def to_gifts_with_reviews(rows: list[dict]) -> list[dict]:
-    """商品の行にレビュー（属性ラベル+コメント）を付けて、Gift 型のリストにする（レビューは IN 句で1回のSQLでまとめて取る）"""
+def _farewell_review_order(rev: dict) -> tuple:
+    """FR-02（Issue #28）：送別関連 → それ以外。同じグループの中は評価の高い順（評価なしは後ろ）→ review_id の順"""
+    rating = rev.get("rating")
+    return (
+        not is_farewell_related(rev.get("comment") or ""),  # False（送別関連）が先
+        rating is None,  # 評価なしは後ろ
+        -(rating or 0),  # 評価の高い順
+        rev.get("review_id") or "",  # 同じ評価なら review_id の順（毎回同じ並びにする）
+    )
+
+
+def to_gifts_with_reviews(rows: list[dict], farewell_first: bool = False) -> list[dict]:
+    """商品の行にレビュー（属性ラベル+コメント）を付けて、Gift 型のリストにする（レビューは IN 句で1回のSQLでまとめて取る）
+    farewell_first=True（送別で検索したとき）は、商品ごとのレビューを送別関連から順に並べる（FR-02）"""
     if not rows:
         return []
 
@@ -170,7 +184,9 @@ def to_gifts_with_reviews(rows: list[dict]) -> list[dict]:
     # r.user_id と u.user_id を紐づけて一括取得（ユーザー情報が欠損していてもレビューは残すため LEFT JOIN）
     all_reviews = fetch_all(
         f"""SELECT
+                r.review_id,
                 r.product_id,
+                r.rating,
                 r.comment,
                 u.age_group,
                 u.gender
@@ -181,6 +197,10 @@ def to_gifts_with_reviews(rows: list[dict]) -> list[dict]:
               AND TRIM(r.comment) != ''""",
         tuple(product_ids)
     )
+
+    # 送別のときだけ並べ替える。それ以外のシーンは今までどおり（DB が返した順）
+    if farewell_first:
+        all_reviews = sorted(all_reviews, key=_farewell_review_order)
 
     # 3. 取得した全レビューを product_id ごとに辞書（マップ）に整理する
     reviews_map: dict[str, list[dict]] = {}
