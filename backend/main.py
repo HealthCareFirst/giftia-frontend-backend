@@ -25,6 +25,7 @@ from chat import (
 )
 from database import fetch_all
 from farewell import is_farewell_related
+from farewell_search import build_score_sql  # Issue #26：送別検索の重み付け
 from product_evidence import get_product_evidence
 
 load_dotenv()  # .env を読む（DB の接続情報・CORS の許可）
@@ -107,12 +108,8 @@ def search_farewell(q: str, category: str) -> dict:
     # 同じ語が重複していても1語として数える（例：「お酒 お酒」は「お酒」と同じ）※未決事項：チームで確認
     words = list(dict.fromkeys(q.split()))
 
-    # ① 一致数：1語ごとに「商品名・ブランド・説明文のどれかに含めば1点」。MySQL では条件式が 1/0 になるので足し算できる
-    score_parts, score_params = [], []
-    for word in words:
-        score_parts.append("(p.product_name LIKE %s OR p.brand LIKE %s OR p.description LIKE %s)")
-        score_params += [f"%{word}%"] * 3
-    score_sql = " + ".join(score_parts) if score_parts else "0"
+    # ① 点数：1語ごとに、一致した場所で点を付ける（商品名3 > ブランド2 > 説明文1）。同義語にも一致させる（Issue #26）
+    score_sql, score_params = build_score_sql(words)
 
     # ② 候補はキーワードで絞らず、送別タグで取る（キーワードだけでは候補が足りないため）
     where = [
