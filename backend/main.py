@@ -111,7 +111,7 @@ def search_farewell(q: str, category: str) -> dict:
     # ① 点数：1語ごとに、一致した場所で点を付ける（商品名3 > ブランド2 > 説明文1）。同義語にも一致させる（Issue #26）
     score_sql, score_params = build_score_sql(words)
 
-    # ② 候補はキーワードで絞らず、送別タグで取る（キーワードだけでは候補が足りないため）
+    # ② 候補は送別タグで取る（キーワードだけでは候補が足りないため）
     where = [
         "p.stock > 0",
         "EXISTS (SELECT 1 FROM product_scenes ps WHERE ps.product_id = p.product_id AND ps.scene_tag = %s)",
@@ -120,6 +120,11 @@ def search_farewell(q: str, category: str) -> dict:
     if category:
         where.append("p.category = %s")
         where_params.append(category)
+    # Issue #31：キーワードがあるときは、どの語にも一致しない（0点の）商品を出さない。空なら送別商品を評価順に出す
+    # 点数の式は WHERE の最後に置き、その %s の値も where_params の最後に足す（COUNT と本体の両方で順番がそろう）
+    if words:
+        where.append(f"({score_sql}) > 0")
+        where_params += score_params
     condition = " AND ".join(where)
 
     total = fetch_all(f"SELECT COUNT(*) AS n FROM products p WHERE {condition}", tuple(where_params))[0]["n"]
@@ -133,7 +138,7 @@ def search_farewell(q: str, category: str) -> dict:
                      p.review_count DESC,
                      p.product_id
             LIMIT %s""",
-        # SELECT 内の %s（一致数）が先、WHERE の %s が後。順番を入れ替えると順位がおかしくなる
+        # SELECT 内の %s（一致数）が先、WHERE の %s（Issue #31 の点数の条件を含む）が後。順番を入れ替えると順位がおかしくなる
         (*score_params, *where_params, FAREWELL_LIMIT),
     )
     # rating が NULL の商品は後ろに回す（p.rating IS NULL が 0→1 の順）※未決事項：チームで確認

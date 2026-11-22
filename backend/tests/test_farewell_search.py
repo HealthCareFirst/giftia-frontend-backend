@@ -106,3 +106,82 @@ def test_individually_wrapped_sweets_first():
 @pytest.mark.parametrize("q", ["上司 お酒", "お菓子 個包装", "コーヒー", ""])
 def test_same_result_every_time(q):
     assert rank(q) == rank(q) == rank(q)
+
+
+# ── 一致しない商品を出さない（Issue #31）──────────────────
+# main.search_farewell をそのまま呼び、main.fetch_all を「SQLite で実行する偽物」に差し替える。
+# 件数（COUNT）と商品を取る SQL の両方が、%s の順番を含めて正しく動くかを確かめる。
+
+import main  # noqa: E402
+
+# (product_id, category, brand, product_name, description, price, rating, review_count, stock, 送別タグ)
+SEARCH_PRODUCTS = [
+    ("H1", "食品", "酒蔵A", "純米吟醸 飲み比べ", "職場の送別に。", 5000, 4.0, 10, 5, True),
+    ("H2", "コスメ", "香りの店", "ハンドクリーム", "上司へのプレゼントに。", 2000, 4.9, 200, 5, True),
+    ("H3", "食品", "洋菓子C", "プチフィナンシェ", "しっとり焼き上げました。", 1500, 4.8, 150, 5, True),
+    ("H4", "生活雑貨", "雑貨D", "今治タオル", "やわらかい手ざわり。", 3000, 4.7, 90, 5, True),
+    ("H5", "食品", "酒蔵B", "日本酒 辛口", "在庫切れ。", 4000, 5.0, 300, 0, True),  # 在庫なし
+    ("H6", "食品", "酒蔵C", "日本酒 甘口", "送別タグなし。", 4000, 5.0, 300, 5, False),  # 送別タグなし
+]
+
+
+@pytest.fixture
+def search_db(monkeypatch):
+    con = sqlite3.connect(":memory:")
+    con.row_factory = sqlite3.Row
+    con.execute(
+        "CREATE TABLE products (product_id, category, brand, product_name, description, price, rating, review_count, stock)"
+    )
+    con.execute("CREATE TABLE product_scenes (product_id, scene_tag)")
+    con.execute("CREATE TABLE reviews (review_id, product_id, user_id, rating, comment)")
+    con.execute("CREATE TABLE users (user_id, age_group, gender)")
+    for *cols, farewell in SEARCH_PRODUCTS:
+        con.execute("INSERT INTO products VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)", cols)
+        if farewell:
+            con.execute("INSERT INTO product_scenes VALUES (?, '送別')", (cols[0],))
+
+    def fake_fetch_all(query, params=()):
+        assert query.count("%s") == len(params)  # %s の数と値の数がそろっている
+        return [dict(row) for row in con.execute(query.replace("%s", "?"), params)]
+
+    monkeypatch.setattr(main, "fetch_all", fake_fetch_all)
+
+
+def ids(result):
+    return [g["id"] for g in result["results"]]
+
+
+def test_hides_products_matching_no_word(search_db):
+    """「上司 日本酒」：上司にも日本酒にも一致しない商品は出ない
+    ※「日本酒」は同義語の辞書のキーではないので、「純米吟醸」の H1 は一致しない（辞書の見直しは別の Issue）"""
+    result = main.search_farewell("上司 日本酒", "")
+    assert "H3" not in ids(result)  # プチフィナンシェ：どの語にも一致しない
+    assert "H4" not in ids(result)  # タオル：どの語にも一致しない
+    assert "H2" in ids(result)  # ハンドクリーム：説明文に「上司」があるので1点（出る）
+    assert result["total"] == len(result["results"])  # 件数も、除いたあとの数
+
+
+def test_sake_word_matches_only_sake(search_db):
+    """「お酒」：同義語で日本酒・吟醸に一致する H1 だけ。在庫なし（H5）・送別タグなし（H6）は出ない"""
+    result = main.search_farewell("お酒", "")
+    assert ids(result) == ["H1"]
+    assert result["total"] == 1
+
+
+def test_no_match_returns_empty(search_db):
+    """どの商品にも一致しないときは0件（画面は0件の文言を出す）"""
+    result = main.search_farewell("ワイングラス", "")
+    assert result == {"total": 0, "results": []}
+
+
+def test_empty_keyword_lists_farewell_products_as_before(search_db):
+    """キーワードが空なら、これまでどおり送別タグ付き・在庫ありの商品を評価順に出す"""
+    result = main.search_farewell("", "")
+    assert ids(result) == ["H2", "H3", "H4", "H1"]
+    assert result["total"] == 4
+
+
+def test_category_and_keyword_together(search_db):
+    """カテゴリーとキーワードを両方指定しても、%s の順番がずれない"""
+    result = main.search_farewell("上司 お酒", "食品")
+    assert ids(result) == ["H1"]  # ハンドクリーム（コスメ）はカテゴリーで外れる
