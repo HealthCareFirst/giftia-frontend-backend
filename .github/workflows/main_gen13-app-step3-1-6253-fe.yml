@@ -65,4 +65,6 @@ jobs:
           app-name: "gen13-app-step3-1-6253-fe"
           slot-name: "Production"
           package: release.zip
+          # 前回のファイルを消してから置き直す（同じ名前・同じサイズのファイルが古いまま残り、古い画面が出続けたため）
+          clean: true
           publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_68F221CD8FD648E18FB7765A4E084C9F }}
