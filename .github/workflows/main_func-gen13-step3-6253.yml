@@ -1,0 +1,73 @@
+# API（backend/）を Azure Functions（Flex 従量課金）にデプロイする
+# リリース手順書 2.4・2.5 の「直したあとのワークフロー」をもとに作成
+# （main の Branch protection により、デプロイセンターが yml を main に直接コミットできなかったため、PR で追加する）
+name: Build and deploy Python project to Azure Function App - func-gen13-step3-6253
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "backend/**"
+      - ".github/workflows/main_func-gen13-step3-6253.yml"
+  workflow_dispatch:
+
+env:
+  PYTHON_VERSION: "3.14" # 関数アプリのランタイムと同じにする
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python version
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Create and start virtual environment
+        run: |
+          python -m venv venv
+          source venv/bin/activate
+
+      # requirements.txt のパッケージが入るかの確認（本番用は Azure 側で remote-build する）
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # backend/ の中身だけを、リポジトリ直下の release.zip に固める（venv/ は外す）
+      - name: Zip artifact for deployment
+        run: zip -qr ../release.zip . -x 'venv/*'
+
+      - name: Upload artifact for deployment job
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-app
+          path: release.zip
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+
+    steps:
+      # path: は書かない（書くと同じ名前のフォルダができ、zip が見つからなくなる）
+      - name: Download artifact from build job
+        uses: actions/download-artifact@v4
+        with:
+          name: python-app
+
+      - name: "Deploy to Azure Functions"
+        uses: Azure/functions-action@v1
+        with:
+          app-name: "func-gen13-step3-6253"
+          package: release.zip
+          publish-profile: ${{ secrets.AZUREAPPSERVICE_PUBLISHPROFILE_6E39C8EF777447588D6A7E8FE1C3C5C0 }}
+          sku: "flexconsumption"
+          remote-build: true
