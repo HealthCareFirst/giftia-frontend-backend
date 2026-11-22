@@ -3,6 +3,11 @@
 // 1週目の lib/sampleGifts.ts は、このファイルに置き換える（ダミーは使わない）。
 // 答えは 配布コード/答え合わせ/frontend/api.ts（自分で埋めてから見る）。
 
+export type ReviewItem = {
+  authorLabel: string; // 例: "30代・女性", "20代・未回答", "未回答"
+  comment: string;
+};
+
 // 画面が使う商品の形。1週目と同じ（画面・ResultCard は変えない）
 export type Gift = {
   id: string; // 商品ID（例 G0001）
@@ -12,7 +17,7 @@ export type Gift = {
   price: number; // 価格（円）
   rating: number; // レビューの平均
   reviewCount: number; // レビュー件数
-  reviews?: string[]; // 【追加】レビューコメントの配列（文字列のリスト）
+  reviews?: ReviewItem[]; // 【更新】属性付きレビューコメントの配列
   overBudget?: boolean; // 予算（5,000円）を超えているか。画面側で付ける印（APIからは来ない）
 };
 
