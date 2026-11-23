@@ -60,10 +60,10 @@ def test_review_stats_counts_with_shared_words():
     assert stats["text"] == "レビューは全部で3件。そのうち送別に関係する言葉を含むレビューは2件。"
 
 
-def test_few_reviews_ignores_workplace_only():
-    """「職場」だけのレビューしかない商品は、送別関連のレビューがない（few_reviews）扱いになる"""
-    assert chat.has_few_reviews([_review("review:R1", "職場で渡しやすかった。")]) is True
-    assert chat.has_few_reviews([_review("review:R2", "退職される方へ。")]) is False
+def test_no_farewell_reviews_ignores_workplace_only():
+    """「職場」だけのレビューしかない商品は、送別関連のレビューがない（no_farewell_reviews）扱いになる"""
+    assert chat.has_no_farewell_reviews([_review("review:R1", "職場で渡しやすかった。")]) is True
+    assert chat.has_no_farewell_reviews([_review("review:R2", "退職される方へ。")]) is False
 
 
 def test_select_evidence_bonus_uses_shared_words():

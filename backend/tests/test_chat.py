@@ -179,6 +179,43 @@ def test_drops_share_message_with_strong_words(fake, word):
     assert data["status"] == "ok"  # 回答と出典はそのまま返す
 
 
+@pytest.mark.parametrize(
+    "claim",
+    ["レビューはまだないみたい。", "レビューも好評だね。", "贈り物に喜ばれてるみたい。", "人気の商品だよ。"],
+)
+def test_drops_review_claims_from_share_message(fake, claim):
+    # AI が自分の言葉で書いたレビューの有無・評判の文は取り除き、事実の文だけ残す
+    # （実例：レビューが3件ある商品で「レビューを要約」に「レビューはまだないみたい。」と書いた）
+    fake["reply"] = model_reply(share_message=SHARE + claim)
+    assert post_chat(fake, question="レビューを要約").json()["share_message"] == SHARE
+
+
+def test_review_claim_removal_keeps_server_quote(fake):
+    # 取り除いたあとでも、サーバーが照合したレビューの引用はつながる
+    fake["reply"] = model_reply(share_message=SHARE + "レビューはまだないみたい。", quote=("review:RV0003", "誕生日に贈りました"))
+    assert post_chat(fake, question="レビューを要約").json()["share_message"] == (
+        SHARE + "レビューには「誕生日に贈りました」って書いてあったよ。"
+    )
+
+
+def test_drops_share_message_when_only_review_claim(fake):
+    fake["reply"] = model_reply(share_message="焼き菓子の詰め合わせ（3,980円）、味が好評だよ。")
+    assert post_chat(fake, question="レビューを要約").json()["share_message"] == ""
+
+
+def test_keeps_review_count_when_stats_source_is_verified(fake):
+    # 件数の根拠を確かめられた回答では、件数を書いた一文を残す（ルール13）
+    message = "焼き菓子の詰め合わせ（3,980円）、送別で贈ったというレビューが1件あるよ。"
+    fake["reply"] = model_reply(source_ids=["G0001:review_stats"], share_message=message)
+    assert post_chat(fake, question="送別で贈った例はある？").json()["share_message"] == message
+
+
+def test_prompt_says_no_farewell_reviews_does_not_mean_no_reviews():
+    # 以前の few_reviews は「レビューがない」と読まれたため、意味どおりの名前と説明にしている
+    assert "few_reviews" not in chat.SYSTEM_PROMPT.replace("no_farewell_reviews", "")
+    assert "レビューがないという意味ではありません" in chat.SYSTEM_PROMPT
+
+
 # ── AI に渡すもの ────────────────────────────
 
 def test_sends_question_and_evidence_as_data(fake):
@@ -261,9 +298,9 @@ def test_review_stats_cannot_be_quoted(fake):
     assert post_chat(fake, question="レビューは何件？").json()["share_message"] == SHARE  # 引用はレビューの原文だけ
 
 
-def test_sends_few_reviews_false_when_farewell_review_exists(fake):
+def test_sends_no_farewell_reviews_false_when_farewell_review_exists(fake):
     post_chat(fake)
-    assert json.loads(fake["messages"][1]["content"])["few_reviews"] is False  # RV0001 が送別関連
+    assert json.loads(fake["messages"][1]["content"])["no_farewell_reviews"] is False  # RV0001 が送別関連
 
 
 @pytest.mark.parametrize(
@@ -275,9 +312,9 @@ def test_sends_few_reviews_false_when_farewell_review_exists(fake):
         [{"source_id": "review:RV0004", "kind": "review", "text": "送別品には量が少なかった。", "negative": True}],
     ],
 )
-def test_has_few_reviews(reviews):
+def test_has_no_farewell_reviews(reviews):
     base = [i for i in EVIDENCE["G0001"]["items"] if i["kind"] != "review"]
-    assert chat.has_few_reviews(base + reviews) is True
+    assert chat.has_no_farewell_reviews(base + reviews) is True
 
 
 def test_select_evidence_ranks_reviews_and_is_stable():

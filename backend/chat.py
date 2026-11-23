@@ -8,6 +8,7 @@
 import json
 import logging
 import os
+import re
 from typing import Annotated
 
 from openai import APITimeoutError, OpenAI, OpenAIError
@@ -51,6 +52,12 @@ MAX_QUOTE_LENGTH = 30  # 一文の後ろにつなげるレビュー引用の長�
 # 「みんなに伝える一文」に入っていたら、その一文を出さない言葉（裏付けのない強い言い方）。
 # AI へのルール（2・6）だけでは守られないことがあるため、サーバーでも止める
 STRONG_WORDS = ("最適", "最高", "一番", "最も", "ナンバーワン", "No.1", "絶対", "必ず喜ばれ", "間違いな", "ぴったり")
+
+# 「みんなに伝える一文」で、レビューの有無や評判を AI が自分の言葉で書いた文に入る言葉。
+# ルール12で禁止しているが、AI が「レビューはまだないみたい」（レビューがあるのに）や「好評だね」と書くことがあった。
+# これらを含む文はサーバーが取り除く。レビューはサーバーが照合した引用（share_quote）だけで伝える。
+# ただし、件数の根拠（review_stats）を確かめられた回答は、件数を書いてよいので取り除かない（ルール13）
+REVIEW_CLAIM_WORDS = ("レビュー", "口コミ", "クチコミ", "好評", "評判", "喜ばれ", "人気")
 
 
 class ChatRequest(BaseModel):
@@ -129,7 +136,7 @@ SYSTEM_PROMPT = """あなたはギフト通販サイト Giftia の購入相談�
 7. 価格や予算については、商品仕様の価格だけをもとに答えます。予算に合うかどうかを推測で言いません。
 8. 最初に、question がこの商品やギフト選び（価格・予算・配送・中身・量・香り・レビュー・贈る相手や場面など）に関係するかを判断し、on_topic に入れます。天気・ニュース・雑談・ほかの商品の話など、関係しない質問のときは on_topic を false にします。そのときの断りの文はサーバーが用意するので、answer は短くてかまいません。
 9. 回答は日本語で、200字以内の丁寧な文にします。レビューを引用するときは、原文の一部をかぎかっこで示します。
-10. few_reviews が true のとき（レビューがない、または送別に関するレビューがないとき）は、商品説明と商品仕様に書かれた事実から、送別ギフトとしてのおすすめポイントを前向きに、積極的に伝えます。「〇〇なので、△△に向いています」のように、事実と、それが送別のどんな場面に役立つかを結びつけて1〜2個書きます。ただし、ルール2と6は守ります。評判・人気・効果は書かず、購入者の声や感想のように見える書き方もしません。few_reviews が true でも、レビューが1件もないとは限らないので、レビューの有無や件数は書きません（件数はルール13の evidence があるときだけ書きます）。
+10. no_farewell_reviews が true のときは、送別に関係するレビューがありません（送別以外のレビューは evidence に入っていることがあります。レビューがないという意味ではありません）。evidence にレビューがあるときは、レビューについての質問（要約など）には、そのレビューを使って答えます。そのうえで、商品説明と商品仕様に書かれた事実から、送別ギフトとしてのおすすめポイントを前向きに、積極的に伝えます。「〇〇なので、△△に向いています」のように、事実と、それが送別のどんな場面に役立つかを結びつけて1〜2個書きます。ただし、ルール2と6は守ります。評判・人気・効果は書かず、購入者の声や感想のように見える書き方もしません。no_farewell_reviews が true でも、レビューが1件もないとは限らないので、レビューの有無や件数は書きません（件数はルール13の evidence があるときだけ書きます）。
 11. share_message には、利用者が一緒に贈る同僚へ LINE などで「これどうかな？」と相談するときに、そのまま送れる60字以内の短い文を入れます。同僚どうしの、くだけすぎない話し言葉（「〜だよ」「〜みたい」）で書きます。利用者は question の点を気にして相談しようとしています。その点について evidence から分かる事実を中心に、商品名を短くしたものと商品仕様の価格を入れます。質問の点が確認できなかった場合は、分かっている事実と「〇〇は商品情報では分からなかった」を書きます。「どうかな？」のような問いかけは書きません。評判・推測・売り込みの言葉（「おすすめ」「お早めに」など）は入れません。価格・予算・配送日・入り数・香り・レビューなど、この商品についての質問はすべてギフト選びに関係する質問です。source_ids が空でないときは、share_message を必ず書きます。ギフト選びと関係のない質問のときだけ空文字にします。
    share_message の書き方の例（商品名と数字は架空です。実際の evidence で書きます）：
    question「職場で10人に配れる？」→「〇〇のクッキー（3,000円）、個包装の12個入りだから10人に配れそう。」
@@ -190,9 +197,11 @@ RESPONSE_FORMAT = {
 }
 
 
-def has_few_reviews(items: list[dict]) -> bool:
-    """レビューが足りないか。レビューがない、または送別に関するレビュー（否定的なものを除く）がないとき True。
-    True のとき、AI は商品説明・仕様の事実から、おすすめポイントを前向きに伝える（ルール10）"""
+def has_no_farewell_reviews(items: list[dict]) -> bool:
+    """送別に関するレビュー（否定的なものを除く）がないか。レビューがない、または送別以外のレビューしかないとき True。
+    True のとき、AI は商品説明・仕様の事実から、おすすめポイントを前向きに伝える（ルール10）。
+    以前は few_reviews という名前で AI に渡していたが、「レビューがない」と読まれ、レビューが3件ある商品で
+    「レビューはまだないみたい」と書かれたため、意味どおりの名前にした"""
     return not any(
         item["kind"] == "review"
         and not item.get("negative")
@@ -230,12 +239,12 @@ def share_message_from_stats(stats: dict) -> str:
     return head + f"送別で贈ったというレビューが{stats['farewell_review_count']}件あるよ。"
 
 
-def build_messages(product: dict, evidence: list[dict], question: str, few_reviews: bool = False) -> list[dict]:
+def build_messages(product: dict, evidence: list[dict], question: str, no_farewell_reviews: bool = False) -> list[dict]:
     """質問と根拠を JSON のデータとして渡す（命令として読まれないようにする）"""
     data = {
         "product_name": product["product_name"],
         "question": question,
-        "few_reviews": few_reviews,
+        "no_farewell_reviews": no_farewell_reviews,
         "evidence": [
             {
                 "source_id": item["source_id"],
@@ -291,6 +300,13 @@ def strip_question(text: str) -> str:
                 text = text[: -len(q)].rstrip()
                 changed = True
     return text
+
+
+def drop_review_claims(text: str) -> str:
+    """REVIEW_CLAIM_WORDS を含む文（「。」「！」で区切った1文ずつ）を取り除く。残りがなければ空文字"""
+    sentences = re.findall(r"[^。！!]+[。！!]?", text)
+    kept = [s for s in sentences if not any(word in s for word in REVIEW_CLAIM_WORDS)]
+    return "".join(kept).strip()
 
 
 def verify_quote(share_quote: dict, by_id: dict) -> tuple[str, str] | None:
@@ -351,6 +367,8 @@ def parse_and_verify(raw: str | None, evidence: list[dict]) -> dict:
         share_message = ""
     else:
         stats = next((by_id[s] for s in verified if by_id[s]["kind"] == "stats"), None)
+        if not stats:
+            share_message = drop_review_claims(share_message)
         if not share_message and stats:
             share_message = share_message_from_stats(stats)
     quote = verify_quote(share_quote, by_id)
@@ -381,6 +399,6 @@ def answer_question(product_evidence: dict, question: str) -> dict:
     evidence = select_evidence(items, question)
     if any(word in question for word in STATS_QUESTION_WORDS):
         evidence.append(review_stats_item(product, items))
-    messages = build_messages(product, evidence, question, has_few_reviews(items))
+    messages = build_messages(product, evidence, question, has_no_farewell_reviews(items))
     raw = call_model(messages)
     return parse_and_verify(raw, evidence)
