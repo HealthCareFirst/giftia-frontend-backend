@@ -357,3 +357,11 @@ def test_rejects_empty_or_too_long_question(fake, question):
 
 def test_accepts_question_at_max_length(fake):
     assert post_chat(fake, question="あ" * 200).status_code == 200
+
+
+def test_prompt_has_fact_only_example_for_farewell_reason():
+    # 「送別品として選ぶ根拠は？」に AI が「贈り物にぴったりだよ」と書き、STRONG_WORDS で一文ごと消えていたため、
+    # 事実だけで書く例を入れている。禁止する言葉を例に書くと、かえってその言葉が増えたので書かない
+    example = next(line for line in chat.SYSTEM_PROMPT.splitlines() if "question「送別品として選ぶ根拠は？」" in line)
+    assert "評価の言葉でまとめず" in example
+    assert not any(word in example for word in chat.STRONG_WORDS)
